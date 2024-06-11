@@ -10,6 +10,7 @@ else()
    set(ULTRALEAP_PATH_ROOT "")
 endif()
 
+find_package(UltraleapHaptics REQUIRED)
 find_package(LeapSDK
      REQUIRED
      PATHS
@@ -18,8 +19,8 @@ find_package(LeapSDK
 	# 	file(COPY "${ULTRALEAP_PATH_ROOT}/LeapSDK/include/LeapC.h"
 	# 		DESTINATION "${PROJECT_SOURCE_DIR}/ultraleap_poller/include/")
 
-if (UNIX)    
-    find_package(Threads REQUIRED)    
+if (UNIX)
+    find_package(Threads REQUIRED)
 endif (UNIX)
 add_subdirectory(mouse_control)
 add_subdirectory(ultraleap_poller)
@@ -37,6 +38,7 @@ target_include_directories(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
      PUBLIC
      LeapSDK::LeapC
+     Ultraleap::Haptics
      PRIVATE
      mouse_control
      ultraleap_poller)
@@ -64,4 +66,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy
 	${PROJECT_SOURCE_DIR}/LICENSE
+	$<TARGET_FILE_DIR:${PROJECT_NAME}>)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy
+	${PROJECT_SOURCE_DIR}/PRESS.json
+	$<TARGET_FILE_DIR:${PROJECT_NAME}>)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy
+	${PROJECT_SOURCE_DIR}/RELEASE.json
 	$<TARGET_FILE_DIR:${PROJECT_NAME}>)

@@ -6,6 +6,8 @@
 #include "MouseControl.h"
 #include "UltraleapPoller.h"
 
+#include <ultraleap/haptics/ulhaptics.h>
+
 #define SECONDS_TO_MICROSECONDS(seconds) seconds * 1000000
 #define METERS_TO_MILLIMETERS(meters) meters * 1000
 #define MILLIMETERS_TO_METERS(millimeteres) millimeteres * 0.001
@@ -27,6 +29,51 @@ const float CURSOR_DEADZONE_THRESHOLD_METERS = 0.03f;
 
 LEAP_VECTOR PrevPos = {0, 0, 0};
 
+static float normal_top[4][4] = {
+    { 0.001f, 0.0f, 0.0f, 0.0f },
+    { 0.0f, 0.0f, -0.001f, 0.0667f },
+    { 0.0f, 0.001f, 0.0f, -0.0061f },
+    { 0.0f, 0.0f, 0.0f, 1.0f }
+};
+
+static float normal_bottom[4][4] = {
+    { -0.001f, 0.0f, 0.0f, 0.0f },
+    { 0.0f, 0.0f, 0.001f, -0.0667f },
+    { 0.0f, 0.001f, 0.0f, -0.0061f },
+    { 0.0f, 0.0f, 0.0f, 1.0f }
+};
+
+static float rotated_top[4][4] = {
+    { 0.0f, 0.0f, -0.001f, 0.154f },
+    { -0.001f, 0.0f, 0.0f, -0.0061f },
+    { 0.0f, 0.001f, 0.0f, 0.0f },
+    { 0.0f, 0.0f, 0.0f, 1.0f }
+};
+
+static float rotated_bottom[4][4] = {
+    { 0.0f, 0.0f, 0.001f, -0.154f },
+    { 0.001f, 0.0f, 0.0f, -0.0061f },
+    { 0.0f, 0.001f, 0.0f, 0.0f },
+    { 0.0f, 0.0f, 0.0f, 1.0f }
+};
+
+LEAP_VECTOR transform(LEAP_VECTOR v, float m[4][4])
+{
+    LEAP_VECTOR result_vec;
+    result_vec.x = (v.x * m[0][0]) + (v.y * m[0][1]) + (v.z * m[0][2]) + (1.0f * m[0][3]);
+    result_vec.y = (v.x * m[1][0]) + (v.y * m[1][1]) + (v.z * m[1][2]) + (1.0f * m[1][3]);
+    result_vec.z = (v.x * m[2][0]) + (v.y * m[2][1]) + (v.z * m[2][2]) + (1.0f * m[2][3]);
+    return result_vec;
+}
+
+enum LoadedSensation {
+    NONE,
+    PRESS,
+    DRAG,
+    RELEASE
+};
+
+enum LoadedSensation loaded_sensation = NONE;
 
 float lerp(float a, float b, float t)
 {
@@ -240,6 +287,26 @@ int main(int argc, char** argv)
 
     config.print();
 
+    // Initialize haptics
+	ulh_context* ctx = NULL;
+	ulh_device_info** devices_list = NULL;
+        size_t devices_count = 0;
+        ulh_device* device = NULL;
+
+	ulh_init(&ctx);
+	ulh_device_info_make_list(ctx, &devices_list, &devices_count);
+	if (devices_count == 0)
+	{
+	   ulh_device_mock_create(ctx, NULL, NULL, &device);
+	}
+	else
+	{
+	   ulh_device_open(devices_list[0], &device);
+	}
+	ulh_device_hapev3_reset_to_default(device);
+	ulh_device_hapev3_load_json_file(device, "./PRESS.json");
+	loaded_sensation = PRESS;
+
 	printf("Setting up..\n");
 	UltraleapPoller ulp;
 
@@ -312,11 +379,25 @@ int main(int argc, char** argv)
 		});
 	}
 
-	ulp.SetOnIndexPinchStartCallback([](const int64_t timestamp, const LEAP_HAND &hand) {
+	ulp.SetOnIndexPinchStartCallback([&device](const int64_t timestamp, const LEAP_HAND &hand) {
+	    // Press haptics
+		if (loaded_sensation != PRESS) {
+            ulh_device_hapev3_load_json_file(device, "./PRESS.json");
+            loaded_sensation = PRESS;
+        }
+		ulh_device_hape_start(device, 0.0);
+
 		PrimaryDown();
 		EnableCursorDeadzone(hand.palm.position);
 	});
-	ulp.SetOnIndexPinchStopCallback([](const int64_t timestamp, const LEAP_HAND&) {
+	ulp.SetOnIndexPinchStopCallback([&device](const int64_t timestamp, const LEAP_HAND&) {
+        // Release haptics
+        if (loaded_sensation != RELEASE) {
+            ulh_device_hapev3_load_json_file(device, "./RELEASE.json");
+            loaded_sensation = RELEASE;
+        }
+		ulh_device_hape_start(device, 0.0);
+
 		PrimaryUp();
 		DisableCursorDeadzone();
 	});
@@ -368,7 +449,19 @@ int main(int argc, char** argv)
 		});
 	}
 
-	ulp.SetPositionCallback([&ulp, &config](LEAP_VECTOR v) {
+	ulp.SetPositionCallback([&ulp, &config, &device](LEAP_VECTOR v) {
+	    // set the tracking transform for the sensation
+		LEAP_VECTOR vec = transform(v, normal_top);
+
+        float transform[16] = {
+            1.0f, 0.0f, 0.0f, vec.x,
+            0.0f, 1.0f, 0.0f, vec.y,
+            0.0f, 0.0f, 1.0f, vec.z,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+
+	    ulh_device_hapev3_set_tracker(device, transform);
+
 		if ((PrevPos.x == 0 && PrevPos.y == 0 && PrevPos.z == 0) || !MouseActive)
 		{
 			// We want to do relative updates so skip this one so we have sensible numbers
@@ -422,11 +515,11 @@ int main(int argc, char** argv)
 
 		PrevPos = v;
 	});
-	
+
 	ulp.StartPoller();
-	
+
 	std::cout << "Press \"x\" to quit." << std::endl;
-	
+
 	while (true)
 	{
 		char c;
@@ -439,5 +532,11 @@ int main(int argc, char** argv)
 	printf("Quitting\n");
 
 	ulp.StopPoller();
+
+	// Deinit/clean haptics
+	ulh_device_close(device);
+	ulh_device_info_free_list(devices_list, devices_count, true);
+	ulh_exit(ctx);
+
 	return 0;
 }
